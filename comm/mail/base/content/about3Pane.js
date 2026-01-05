@@ -111,7 +111,7 @@ var messagePane;
 var hasDOMContentLoaded = Promise.withResolvers();
 
 
-const FP_LIB_BOITEPARTAGE="Boite partag\u00e9e";
+const FP_LIB_BOITEPARTAGE = "Boite partag\u00e9e";
 const BALP_ID = ".-.";
 //return true si folder est un dossier "Boite partagee"
 function cm2IsDossierBoitePartage(folder) {
@@ -124,7 +124,7 @@ function cm2IsDossierBoitePartage(folder) {
   if (!cm2IsFolderBalp(folder))
     return false;
 
-  if (FP_LIB_BOITEPARTAGE==folder.name)
+  if (FP_LIB_BOITEPARTAGE == folder.name)
     return true;
 
   return false;
@@ -139,52 +139,48 @@ function cm2IsFolderBalp(folder) {
     return false;
 
   console.log(folder.name+" is a balp folder");*/
-  if(folder.username.includes(BALP_ID))
+  if (folder.username.includes(BALP_ID))
     return true;
   return false;
 }
 
 //return true si folder est le dossier courrier entrant de boite partagee
-function cm2IsEntrantBalp(folder)
-{
-    //#6746: Disparition des boites et dossiers dans le panneau de gauche (ajout gestion erreur)
-    try
-    {
-        if (!cm2IsFolderBalp(folder))
-            return false;
+function cm2IsEntrantBalp(folder) {
+  //#6746: Disparition des boites et dossiers dans le panneau de gauche (ajout gestion erreur)
+  try {
+    if (!cm2IsFolderBalp(folder))
+      return false;
 
-        if (folder.isServer)
-            return false;
+    if (folder.isServer)
+      return false;
 
-        if (folder.parent != null && folder.parent.isServer)
-            return false;
+    if (folder.parent != null && folder.parent.isServer)
+      return false;
 
-        if (folder.parent.parent != null && !folder.parent.parent.isServer)
-            return false;
+    if (folder.parent.parent != null && !folder.parent.parent.isServer)
+      return false;
 
-        if (FP_LIB_BOITEPARTAGE!=folder.parent.name)
-            return false;
+    if (FP_LIB_BOITEPARTAGE != folder.parent.name)
+      return false;
 
-        //valider courrier entrant balp
-        var username=folder.username;
-        if (username) {
-            var parts=username.split(BALP_ID);
-            if (2==parts.length &&
-                folder.name==parts[1]){
-            return true;
-            }
-        }
-
-        return false;
+    //valider courrier entrant balp
+    var username = folder.username;
+    if (username) {
+      var parts = username.split(BALP_ID);
+      if (2 == parts.length &&
+        folder.name == parts[1]) {
+        return true;
+      }
     }
-    catch(ex)
-    {
-        return false;
-    }
+
+    return false;
+  }
+  catch (ex) {
+    return false;
+  }
 }
 
 function reparentSharedMailboxesCM2() {
-  //console.log("Running reparentSharedMailboxesCM2...");
 
   try {
     // Cleanup previous UI-only modifications
@@ -198,9 +194,11 @@ function reparentSharedMailboxesCM2() {
       delete el.dataset.balpHidden;
       delete el.dataset.balpMoved;
       delete el.dataset.balpModified;
+      el.style.removeProperty("--tree-level");
+      el.style.paddingLeft = "";
     }
 
-    // Helper to read/normalize a row level (best-effort)
+    // Helper to read/normalize a row level
     const getLevel = row => {
       const v = row?.getAttribute?.("aria-level") || row?.getAttribute?.("level") || row?.dataset?.level;
       const n = parseInt(v, 10);
@@ -211,16 +209,21 @@ function reparentSharedMailboxesCM2() {
       row.setAttribute("aria-level", n);
       row.setAttribute("level", n);
       row.dataset.level = n;
+      row.style.setProperty("--tree-level", n);
+      // Fallback: visual indent if CSS var not used
+      const indent = (n - 1) * 16;
+      if (indent >= 0) row.style.paddingLeft = indent + "px";
     };
 
     for (const account of MailServices.accounts.accounts) {
       const root = account.incomingServer.rootFolder;
       const balpEntrantUris = new Set();
 
+
       function walk(folder) {
         try {
           if (cm2IsFolderBalp(folder)) {
-            // Hide the intermediate "Boîte Partagée"
+            // "Boîte Partagée" container
             if (cm2IsDossierBoitePartage(folder)) {
               const rowId = FolderPaneUtils.makeRowID("all", folder.URI);
               const row = document.getElementById(rowId);
@@ -229,55 +232,66 @@ function reparentSharedMailboxesCM2() {
                 row.dataset.balpHidden = "1";
                 row.dataset.balpModified = "1";
               }
-            }
 
-            // Handle the true BALP Inbox
-            if (cm2IsEntrantBalp(folder)) {
-              balpEntrantUris.add(folder.URI);
+              // Handle ALL children of the shared mailbox
+              const parentRowId = FolderPaneUtils.makeRowID("all", folder.parent.URI); // Account Root
+              const parentRow = document.getElementById(parentRowId);
 
-              try {
-                folder.setFlag(Ci.nsMsgFolderFlags.Inbox);
-              } catch (e) {
-                console.error("setFlag failed for", folder.URI, e);
-              }
+              if (parentRow && parentRow.parentNode) {
+                parentRow.setAttribute("open", "true");
 
-              const rowId = FolderPaneUtils.makeRowID("all", folder.URI);
-              let anchorRow = document.getElementById(rowId);
-              if (anchorRow) {
-                // Rename visually
-                const label = anchorRow.querySelector(".name");
-                if (label && !label.dataset.balpOriginalName) {
-                  label.dataset.balpOriginalName = label.textContent;
-                  label.textContent = "Courrier entrant";
-                }
-                anchorRow.dataset.balpModified = "1";
+                // Account root often has level 1 (even if attribute is missing/0)
+                let pLevel = getLevel(parentRow);
+                if (pLevel === 0) pLevel = 1;
 
-                // Ensure parent is expanded and place Entrant just under parent shared mailbox
-                const parentRowId = FolderPaneUtils.makeRowID("all", folder.parent.URI);
-                const parentRow = document.getElementById(parentRowId);
-                if (parentRow && parentRow.parentNode) {
-                  parentRow.setAttribute("open", "true");
-                  parentRow.parentNode.insertBefore(anchorRow, parentRow.nextSibling);
-                  anchorRow.dataset.balpMoved = "1";
+                // Default target is Account Level + 1
+                let targetLevel = pLevel + 1;
+
+                // If the hidden folder itself has a correct level, use that
+                if (row) {
+                  const myLevel = getLevel(row);
+                  if (myLevel > 0 && myLevel > pLevel) targetLevel = myLevel;
                 }
 
-                // Make sure Entrant's row is "open" so child rows exist in the DOM
-                anchorRow.setAttribute("open", "true");
+                let insertionAnchor = parentRow;
 
-                const targetLevel = getLevel(anchorRow); // children should visually match Entrant's level
                 for (let child of folder.subFolders) {
                   const childRowId = FolderPaneUtils.makeRowID("all", child.URI);
-                  const childRow = document.getElementById(childRowId);
-                  if (!childRow || !anchorRow.parentNode) continue;
+                  let childRow = document.getElementById(childRowId);
 
-                  // Normalize level so indentation matches Entrant (prevents them appearing *under* it)
+                  if (!childRow) continue;
+
+
+                  // if (!childRow) continue; // Already checked above
+
+                  // BALP Inbox specific handling
+                  if (cm2IsEntrantBalp(child)) {
+                    balpEntrantUris.add(child.URI);
+                    try {
+                      child.setFlag(Ci.nsMsgFolderFlags.Inbox);
+                    } catch (e) { }
+
+                    const label = childRow.querySelector(".name");
+                    if (label && !label.dataset.balpOriginalName) {
+                      label.dataset.balpOriginalName = label.textContent;
+                      label.textContent = "Courrier entrant";
+                    }
+                  }
+
+                  // Move the row
+                  if (insertionAnchor.nextSibling) {
+                    insertionAnchor.parentNode.insertBefore(childRow, insertionAnchor.nextSibling);
+                  } else {
+                    insertionAnchor.parentNode.appendChild(childRow);
+                  }
+
+                  // Mark & Indent
+                  childRow.dataset.balpMoved = "1";
+                  childRow.dataset.balpModified = "1";
+                  childRow.setAttribute("open", "true");
                   setLevel(childRow, targetLevel);
 
-                  // Move right after current anchor (Entrant first, then siblings in order)
-                  anchorRow.parentNode.insertBefore(childRow, anchorRow.nextSibling);
-                  anchorRow = childRow; // advance anchor so next child lands after the previous one
-
-                  childRow.dataset.balpModified = "1";
+                  insertionAnchor = childRow;
                 }
               }
             }
@@ -291,7 +305,7 @@ function reparentSharedMailboxesCM2() {
 
       walk(root);
 
-      // Hide the account's default Inbox if a BALP Entrant exists
+      // Hide default Inbox if needed
       if (balpEntrantUris.size > 0) {
         let candidate = null;
         try {
@@ -315,10 +329,7 @@ function reparentSharedMailboxesCM2() {
             inboxRow.style.display = "none";
             inboxRow.dataset.balpHidden = "1";
             inboxRow.dataset.balpModified = "1";
-            //console.log("Hid default account Inbox:", candidate.prettyName, candidate.URI);
           }
-        } else {
-          console.log("No non-BALP default Inbox found to hide for account:", account.name);
         }
       }
     }
@@ -773,7 +784,7 @@ var folderPaneContextMenu = {
     this._showMenuItem(
       "folderPaneContext-getMessages",
       (isServer && serverType != "none") ||
-        (["nntp", "rss"].includes(serverType) && !isTrash && !isVirtual)
+      (["nntp", "rss"].includes(serverType) && !isTrash && !isVirtual)
     );
     const showPauseAll = isServer && FeedUtils.isFeedFolder(folder);
     this._showMenuItem("folderPaneContext-pauseAllUpdates", showPauseAll);
@@ -829,9 +840,9 @@ var folderPaneContextMenu = {
     this._showMenuItem(
       "folderPaneContext-markMailFolderAllRead",
       !isServer &&
-        !isSmartTagsFolder &&
-        hasNoSearchTerms() &&
-        serverType != "nntp"
+      !isSmartTagsFolder &&
+      hasNoSearchTerms() &&
+      serverType != "nntp"
     );
     this._showMenuItem(
       "folderPaneContext-markNewsgroupAllRead",
@@ -1404,7 +1415,7 @@ var folderPane = {
       },
 
       addFolder(parentFolder, childFolder) {
-        console.log("addFolder2 "+childFolder.name);
+        console.log("addFolder2 " + childFolder.name);
 
         if (folderPane.getRowForFolder(childFolder, this.name)) {
           // If a row for this folder exists, do nothing.
@@ -3618,10 +3629,10 @@ var folderPane = {
             destinationFolder,
             isReordering
               ? new ReorderFolderListener(
-                  sourceFolder,
-                  targetFolder,
-                  insertAfter
-                )
+                sourceFolder,
+                targetFolder,
+                insertAfter
+              )
               : null
           );
 
@@ -3960,7 +3971,7 @@ var folderPane = {
           title,
           confirmation,
           Services.prompt.STD_YES_NO_BUTTONS +
-            Services.prompt.BUTTON_POS_1_DEFAULT,
+          Services.prompt.BUTTON_POS_1_DEFAULT,
           "",
           "",
           "",
@@ -6714,7 +6725,7 @@ var folderListener = {
     folderPane.addFolder(parentFolder, childFolder);
     folderPane.updateFolderRowUIElements();
   },
-  onMessageAdded() {},
+  onMessageAdded() { },
   onFolderRemoved(parentFolder, childFolder) {
     // Check if the folder is in the selection range before we remove it.
     const row = folderPane.getRowForFolder(childFolder.URI);
@@ -6803,7 +6814,7 @@ var folderListener = {
         break;
     }
   },
-  onFolderPropertyFlagChanged() {},
+  onFolderPropertyFlagChanged() { },
   onFolderEvent(folder, event) {
     if (event == "RenameCompleted") {
       // If a folder is renamed, we get an `onFolderAdded` notification for
